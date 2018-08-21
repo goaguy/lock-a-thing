@@ -11,7 +11,7 @@ definition(
 
 preferences {
     section("Use this Door:") {
-        input "thecontact", "capability.contactSensors", required: true, title: "Door?"
+        input "thecontact", "capability.contactSensor", required: true, title: "Door?"
     }
     section("Lock this lock:") {
         input "thelock", "capability.lock", required: true, title: "Lock?"
@@ -22,18 +22,31 @@ preferences {
 }
 
 def initialize() {
-    subscribe(thelock, "lock.unlock", unlockedHandler)
+    log.debug "initialize"
+    if (!isLocked()) {
+      unlockedHandler()
+    }
+    subscribe(thelock, "lock.unlocked", unlockedHandler)
 }
 
-def lockTimeoutHandler() {
-    didLock = ensureLockedIfClosed()
-    if (!didLock) {
-        runIn(thetimeout, lockTimeoutHandler) 
-    }
+def lockTimeoutHandler(evt) {
+    log.debug "lockTimeoutHandler"
+    
+    def isClosed = thecontact.currentState("contact").value == "closed"
+    def isUnlocked = !isLocked()
+    if (isClosed && isUnlocked) {
+        log.debug "lockTimeoutHandler: locking"
+        doLock()
+    } else {
+        log.debug "lockTimeoutHandler: not lockead setting runIn"
+        runIn(thetimeout, lockTimeoutHandler)
+    }    
 }
 
 def forceLockHandler() {
+    log.debug "forceLockHandler"
     if (!isLocked()) {
+        log.debug "forceLockHandler: sendPush"
         sendPush("Locked due to timeout!")
         doLock()
     }
@@ -41,47 +54,47 @@ def forceLockHandler() {
 }
 
 def checkActuallyLockedHandler() {
-    if (!islocked()) {
+    log.debug "checkActuallyLockedHandler"
+    if (!isLocked()) {
+        log.debug "checkActuallyLockedHandler: sendPush"
         sendPush("Touble locking! Check door!")
     }
 }
 
-def unlockedHandler() {
-    unschedule()
+def unlockedHandler(evt) {
+    log.debug "unlockedHandler: timeout - " + thetimeout
+    unschedule(forceLockHandler)
+    unschedule(lockTimeoutHandler)
+    log.debug "unlockedHandler scheduling"
     runIn(1800, forceLockHandler) // every 30 min
     runIn(thetimeout, lockTimeoutHandler)
 }
 
 def doLock() {
+    log.debug "doLock: timeout - " + thetimeout
+    // Have to send it twice I guess...
     thelock.lock()
-    runIn(thetimeout, checkActuallyLockedHandler)
+    thelock.lock()
+    runIn(10, checkActuallyLockedHandler)
 }
 
 def isLocked() {
-    return thelock.currentState("lock") == "locked"
+    def locked = thelock.lockState.value == "locked"
+    log.debug "isLocked: " + thelock.lockState.value
+    return locked
 }
-
-def ensureLockedIfClosed() {
-    isUnlocked = !isLocked()
-    isClosed = thecontact.currentState("contact") == "closed"
-
-    if (isClosed && isUnlocked) {
-        doLock()
-        return true
-    } 
-    return false
-}
-
 
 def installed() {
+  initialize();
 }
 
 def updated() {
+  unschedule();
     unsubscribe();
     initialize();
 }
 
 def uninstalled() {
+  unschedule();
     unsubscribe();
 }
-
